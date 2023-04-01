@@ -1,0 +1,178 @@
+---
+title: "Post ERCP Pancreatitis Prediction Model"
+author: "Daniek, Paddy, Philipp"
+date: "2023-03-28"
+output:
+  word_document: default
+  pdf_document: default
+bibliography: panc.bib
+link-citations: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r data upload, include=FALSE}
+library(tidyverse)
+library(pmsampsize)
+library(rms)
+library(rmda)
+library(DescTools)
+library(pROC)
+library(metafor)
+# get the directory path where the source file is located
+dir_path <- dirname(rstudioapi::getSourceEditorContext()$path)
+
+# set the working directory to the directory path where the source file is located
+setwd(dir_path)
+rm(dir_path)
+
+# get the dataset
+df <- read_csv("pancreatitis.csv")
+
+```
+
+```{r missing values and data cleaning, include=FALSE}
+
+# To check whether there are missing values in df
+df %>% 
+  map(~ sum(is.na(.)))
+
+df %>% 
+  map(~unique(.)) #missing values in "asa", "asa81", "asa325"
+
+# Remove the values after the suffix "_" in each cell and values become numeric
+# The three asa columns are removed as we don't consider them relevant predictors
+df_clean <- df %>%
+  select(-asa, -asa81, -asa325) %>% 
+  mutate_all(~ str_remove(., "_.*")) %>% 
+  mutate_all(~ as.numeric(.))
+
+```
+
+```{r model building, include=FALSE}
+
+# First we are building a model with the most relevant clinical parameters (according to literature and expert knowledge)
+
+model_rms <- lrm(data = df_clean,
+                 outcome ~ sod + pep + psphinc + precut + difcan + pneudil + amp + 
+                   age + gender + rx, x = TRUE, y = TRUE)
+
+# Next we are building a model with the 20 most relevant predictors
+model_rms_20 <- lrm(data = df_clean,
+                    outcome ~ sod + pep + psphinc + precut + difcan + pneudil + amp + 
+                      age + gender + rx + recpanc + paninj + brush + train + acinar +
+                      prophystent + therastent + pdstent + sodsom + bstent, x = TRUE, y = TRUE)
+
+# Then we perform backward regression according to p values (< 0.05)
+fastbw(model_rms_20, rule="p", sls = 0.1)
+
+model_rms_bw <- lrm(data = df_clean, 
+                          outcome ~ pep + psphinc + difcan + amp + age + rx +
+                            train + acinar, x = TRUE, y = TRUE)
+
+
+
+```
+
+```{r internal validation model_rms, include=TRUE}
+
+# bootstrapping
+val <- validate(model_rms, method="boot", B = 200)
+
+val
+```
+
+
+## Introduction
+This is an example for a citation. @doi:10.1056/NEJMoa1111103
+\
+
+## Methods
+\
+
+## Results
+The area under the curve was ``r round(0.5 * (val[1,5] + 1),2)``%
+\
+
+## Discussion
+\
+
+
+
+
+```{r discrimination model_rms, include=TRUE}
+# to obtain c statistic
+round(0.5 * (val[1 , ] + 1),2)
+```
+
+```{r ROC model_rms, echo=FALSE, message=TRUE}
+# to obtain an ROC curve
+df_pred <- df_clean %>% 
+  mutate(pred_pancreatitis = predict(model_rms, type = "fitted"))
+
+plot.roc(df_pred$outcome, df_pred$pred_pancreatitis, asp = NA)
+```
+
+```{r calibration model_rms, echo=FALSE, results='hide'}
+calibrate(model_rms, B = 200) %>% 
+plot(.)
+```
+
+```{r decision curve model_rms, echo=FALSE, message=FALSE}
+
+dca <- decision_curve(outcome~pred_pancreatitis, data=df_pred, fitted.risk = TRUE)
+plot_decision_curve(dca)
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+## Here is the data for model 2 containing 8 vars after backwardregression
+
+
+
+
+```{r internal validation model_rms_bw, include=TRUE}
+
+# bootstrapping
+val <- validate(model_rms_bw, method="boot", B = 200)
+
+val
+```
+
+```{r discrimination model_rms_bw, include=TRUE}
+# to obtain c statistic
+0.5 * (val[1 , ] + 1)
+
+# to obtain an ROC curve
+df_pred <- df_clean %>% 
+  mutate(pred_pancreatitis = predict(model_rms_bw, type = "fitted"))
+
+plot.roc(df_pred$outcome, df_pred$pred_pancreatitis, asp = NA)
+```
+
+```{r calibration model_rms_bw, include=TRUE}
+calibrate(model_rms, B = 200) %>% 
+plot(.)
+```
+
+```{r decision curve model_rms_bw, include=TRUE}
+
+dca <- decision_curve(outcome~pred_pancreatitis, data=df_pred, fitted.risk = TRUE)
+plot_decision_curve(dca)
+
+
+```
+
+## References
