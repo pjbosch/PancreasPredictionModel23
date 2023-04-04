@@ -1,13 +1,16 @@
 ---
-title: "Post ERCP Pancreatitis Prediction Model"
-author: "Daniek, Paddy, Philipp"
-date: "2023-03-28"
+title: "Developement of a multivariable prediction model for patients at risk of pancreatitis after endoscopic retrograde cholangiopancreatography"
+author: "Daniek Meijs (I6132228), Paddy Janssen (I6041843), Philipp Bosch (I6321906)"
+date: "2023-04-04"
 output:
   word_document: default
-  pdf_document: default
+  pdf_document: 
+    latex_engine: xelatex
+    pandoc_args: ["--variable=fontsize:11pt", "--variable=mainfont:Arial", "--variable=geometry:margin=1in", "--variable=linespread:1.5"]
 bibliography: panc.bib
 link-citations: yes
 ---
+
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -15,12 +18,12 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r data upload, include=FALSE}
 library(tidyverse)
-library(pmsampsize)
 library(rms)
 library(rmda)
 library(DescTools)
 library(pROC)
-library(metafor)
+library(vtable)
+library(stargazer)
 # get the directory path where the source file is located
 dir_path <- dirname(rstudioapi::getSourceEditorContext()$path)
 
@@ -49,7 +52,49 @@ df_clean <- df %>%
   mutate_all(~ str_remove(., "_.*")) %>% 
   mutate_all(~ as.numeric(.))
 
+df_relev <- df %>% 
+  select(-id, -site, -age, -risk, -bsphinc, -chole, -pbmal, -status, -type, -bleed, -asa, -asa81, -asa325) %>% 
+  mutate(outcome = ifelse(.$outcome == 0, "No pancreatitis", "Pancreatitis")) %>% 
+  mutate_all(as.factor)
+
+df_relev2 <- df_relev %>% 
+  select(-outcome)
+
 ```
+
+```{r, table1, include=FALSE}
+d_table <- st(df_relev, group = "outcome", out = "return")
+colnames(d_table) <- c("Variable", "N_", "%_", "N", "%")
+
+d_table2 <- d_table %>% 
+  filter(str_detect(Variable, "1_")) %>% 
+  mutate(Variable = c("Female",
+                      "Sphincter Oddi dysfunction",
+                      "Previous post ERCP pancreatitis",
+                      "Recurrent pancreatitis",
+                      "Pancreatic Sphincterotomy performed",
+                      "Sphincter pre-cut",
+                      "Difficult cannulation",
+                      "Pneumatic dilation of papilla",
+                      "Ampullectomy performed",
+                      "Contrast injection",
+                      "Acinarization on imaging",
+                      "Brushing performed",
+                      "Prophylactic duct stent placed",
+                      "Therapeutic duct stent placed",
+                      "Duct stent placed",
+                      "Sphincter manometry performed",
+                      "Biliary stent placed",
+                      "Trainee performed ERCP",
+                      "Indomethacin received")) %>% 
+  add_row(Variable = "", N_ = "No Pancreatitis", "%_" = "", N = "Pancreatitis", "%" = "", .before = 1) %>% 
+  mutate(Model = c("","1+2", "1", "1+2", "excluded", "1+2", "1", "1+2",
+                   "1", "1+2", "excluded", "2", "excluded", "excluded", "excluded", "excluded", "excluded",
+                   "excluded", "2", "1+2")) %>% 
+  kable()
+
+```
+
 
 ```{r model building, include=FALSE}
 
@@ -65,9 +110,10 @@ model_rms_20 <- lrm(data = df_clean,
                       age + gender + rx + recpanc + paninj + brush + train + acinar +
                       prophystent + therastent + pdstent + sodsom + bstent, x = TRUE, y = TRUE)
 
-# Then we perform backward regression according to p values (< 0.05)
+# Then we perform backward regression according to p values (< 0.1)
 fastbw(model_rms_20, rule="p", sls = 0.1)
 
+# This is the resulting model
 model_rms_bw <- lrm(data = df_clean, 
                           outcome ~ pep + psphinc + difcan + amp + age + rx +
                             train + acinar, x = TRUE, y = TRUE)
@@ -76,103 +122,197 @@ model_rms_bw <- lrm(data = df_clean,
 
 ```
 
-```{r internal validation model_rms, include=TRUE}
+```{r internal validation model_rms, include=FALSE}
 
 # bootstrapping
-val <- validate(model_rms, method="boot", B = 200)
+val1 <- validate(model_rms, method="boot", B = 200)
 
-val
+val1
+```
+
+```{r discrimination model_rms, include=FALSE}
+# to obtain c statistic
+round(0.5 * (val1[1 , ] + 1),2)
+```
+
+```{r ROC model_rms, echo=FALSE, include=FALSE}
+# to obtain an ROC curve
+df_pred1 <- df_clean %>% 
+  mutate(pred_pancreatitis = predict(model_rms, type = "fitted"))
+
+plot.roc(df_pred1$outcome, df_pred1$pred_pancreatitis, asp = NA)
+```
+
+```{r calibration model_rms, echo=FALSE, results='hide', include=FALSE}
+calib1 <- calibrate(model_rms, B = 200) %>% 
+plot(.)
+```
+
+
+
+```{r internal validation model_rms_bw, include=FALSE}
+## Here is the data for model 2 containing 8 vars after backward selection
+# bootstrapping
+val2 <- validate(model_rms_bw, method="boot", B = 200)
+
+val2
+```
+
+```{r discrimination model_rms_bw, include=FALSE}
+# to obtain c statistic
+0.5 * (val2[1 , ] + 1)
+
+# to obtain an ROC curve
+df_pred2 <- df_clean %>% 
+  mutate(pred_pancreatitis = predict(model_rms_bw, type = "fitted"))
+
+plot.roc(df_pred2$outcome, df_pred2$pred_pancreatitis, asp = NA)
+```
+
+```{r calibration model_rms_bw, include=FALSE}
+calib2 <- calibrate(model_rms, B = 200) %>% 
+plot(.)
 ```
 
 
 ## Introduction
-This is an example for a citation. @doi:10.1056/NEJMoa1111103
-\
+
+Acute pancreatitis is a known and common complication after endoscopic retrograde cholangiopancreatography (ERCP).
+While risk factors for post-ERCP pancreatitis are known, it is still difficult in clinical practice to distinguish patients at high risk of developing this interventional complication.
+Many agents have been studied for prophylaxis of post-ERCP pancreatitis including non-steroidal anti-inflammatory drugs (NSAIDs). 
+The overall goal of treatment is to reduce the inflammatory response, thereby reducing the risk of pancreatitis following ERCP. A randomized controlled trial by Elmunzer et al. reported the positive effect of the NSAID Indomethacin compared to placebo for the development of post-ERCP pancreatitis. [@RN42642] The extended dataset of this study has been recently made publicly available and includes clinically relevant variables for determining the risk of developing post-ERCP pancreatitis.
+The aim of this study is to develop and internally validate a clinical risk prediction model for post-ERCP pancreatitis in patients with an elevated baseline risk with data from a multicenter, randomized, placebo-controlled trial. 
+
+<br>
+
 
 ## Methods
+
+<br>
+
+### Guideline
+The Transparent reporting of a multivariable prediction model for individual prognosis or diagnosis (TRIPOD) was followed in this study. [@RN42643] 
+
+<br>
+
+### Data source
+An augmented version of the data used in the randomized placebo-controlled trial of [@RN42642] comparing rectal indomethacin with placebo, was used in this study. Data on patient demographics, risk factors, and outcomes were recorded on data-collection forms by a blinded investigator before, during and after the ERCP. 
+
+<br>
+
+### Participants
+Patients were included from February 2009 through July 2011 at four university medical centers in the United States. Patients with an increased risk of post-ERCP pancreatitis were selected. Inclusion and exclusion criteria were extensively described in the original paper. [@RN42642] Briefly, patients were included when they met one of the major criteria: clinical suspicion of sphincter of Oddi dysfunction, a history of post-ERCP pancreatitis, pancreatic sphincterotomy, precut sphincterotomy, more than eight cannulation attempts, pneumatic dilatation of an intact biliary sphincter, or ampullectomy. If patients had two of the minor criteria, they were also included: age < 50 years, female, a history of recurrent pancreatitis (more or equal to 2 episodes), three or more injections of contrast agent into the pancreatic duct with at least one injection to the tail of the pancreas, excessive injection of contrast agent into the pancreatic duct resulting in opacification of pancreatic acini, or the acquisition of a cytologic specimen from the pancreatic duct with the use of a brush. Patients who had active pancreatitis, a contraindication for NSAID’s, were already taking NSAID’s, were at a low risk of post-ERCP pancreatitis, or in whom ERCP was unsuitable were excluded.
 \
+Eligible patients were randomized at the end of the ERCP for either rectal indomethacin 100mg or placebo, which they received directly afterwards.
+
+<br>
+
+### Outcome
+The study outcome was post-ERCP pancreatitis, which was defined as new onset pain in the upper abdomen, an elevation in pancreatic enzymes of at least three times the upper limit of the normal range 24 hours after the procedure, and hospitalization for at least 2 nights. This was determined either within hospital stay or, in the case of an uneventful ERCP, by telephone 5 days after the procedure. Investigators or clinicians were blinded for the given treatment.
+
+<br>
+
+### Predictors
+Predictors included in the model were factors that were known to elevate the risk of post-ERCP pancreatitis based on previous literature. [@RN42645] 
+Major and minor criteria as mentioned above, were considered as predictors. [@RN42642] Finally age and the variables depicted in Table 1 were used for the prediction models.
+Patient demographics, risk factors and ERCP related risk predictors were reported by a blinded investigator before or at the moment of the ERCP.
+
+<br>
+
+### Sample size
+Sample size calculations were based on a rule of thumb of 10 events per variable (EPV), resulting in 20 candidate predictors that could be estimated based on our sample size. [@RN42644]
+
+<br>
+
+### Missing data
+Missing data were explored and complete case analysis was performed
+
+<br>
+
+### Statistical analysis
+R version 4.2.1 were used for the analyses. Descriptive statistics were performed. Continuous and categorical predictors were handled using the same definitions and cut-off values as defined in the development study. Logistic regression models were performed using candidate predictors and post-ERCP pancreatitis as the outcome. Two separate models were run. The first model was fitted with ten clinically relevant predictors described as major risk factors in the paper of Elmunzer et al., [@RN42642] combined with age, gender, and treatment category based on expert opinion. A sensitivity analysis with a second model was conducted with the maximum number of parameters based on our sample size. Backward selection was additionally performed for the second model using a p-value of 0.1. The final two models were internally validated using 200 bootstrapping samples. Optimism corrected c-statistics were computed to evaluate discrimination and calibration plots, optimism corrected intercepts, and optimism corrected slopes were constructed and computed as a measure of model calibration. The two models were compared based on their performance. 
+
+<br>
 
 ## Results
-The area under the curve was ``r round(0.5 * (val[1,5] + 1),2)``%
-\
 
-## Discussion
-\
+<br>
+
+### Participants 
+In total, 2019 patients were included in this study. The mean age was 45.6 (SD: 11.6) and 220 (10.9%) developed a post-ERCP pancreatitis (see Table 1 for descriptive statistics on predictors and outcome)
+There were no missing data for the candidate predictors and outcome.
+
+<br>
+
+### Model development
+All patients were included in the analysis. Results of the logistic regression analyses for model 1 and 2 are described in Table 2. Backwards selection in model 2 resulted in a final model with eight parameters. In model 1, for a 24 year old male patient, in the placebo group with previous post ERCP pancreatitis, but without interprocedural sphincterectomy, sphincter pre-cut, difficulty with cannulation, pneumatic dilation of the papilla, or ampullectomy, the predictive probability of getting post-ERCP pancreatitis was 21%.
+
+<br>
+
+### Model performance
+The optimism corrected area under the ROC curve (AUC) for model 1 was 0.69 and 0.72 for model 2. Optimism corrected calibration slopes were 0.93 and 0.95 and optimism corrected calibration intercepts were -0.14 and -0.09, respectively. 
+
+The calibration plots of both models closely approximate the diagonal, with only slight overestimation in the in patients with a predicted probability of 0.4 to 0.5. However, the histogram shows that almost no patients at this predicted risk. This was slightly more pronounced in model 1 (see figure 1 for details.
+
+<br>
+
+## Conclusion
+
+In this study, we developed a model using clinically relevant parameters to predict post-ERCP pancreatitis immediately after ERCP in patients that were at elevated baseline risk. The model showed reasonable discrimination and calibration, similar to other prediction models on post-ERCP pancreatitis.[@RN42649;@RN42647;@RN42644]
+We compared this model to a second one for which predictors were chosen from a multitude of variables using backwards selection. This second model, albeit using a more data driven approach, did not outperform the main model indicating that the chosen clinically relevant predictors were an adequate pick from data set's variables.
+Ampullectomy was the biggest risk factor for developing post-ERCP pancreatitis in our model in line with previous publications. [@RN42646] The protective effect of pneumatic dilatation of the papilla on post-ERCP pancreatitis should be interpreted with caution in respect to the high standard error. 
+The strengths of this study is the completeness of data and relatively high sample size, the use of clinically relevant and easily available variables as predictors and the good model performance. 
+Limitations are the lack of an external validation set and the limited generalizability of our model as the population only consisted of patients in a tertiary care setting enrolled in a randomized controlled trial.
+The implications of this study are that by using this prediction model in clinical practice, patients at high risk of developing post-ERCP pancreatitis can be distinguished and treatment can be adapted respectively. As a next step this model will now be validated in an external cohort. 
+In summary we report the development of a new prediction model on post-ERCP pancreatitis using clinically relevant, and easily available variables.
 
 
+\pagebreak
 
+## Table 1. Descriptive statistics
+```{r desc table, echo=FALSE}
+d_table2
+```
+All reported variables were binary and the table reports the number (N) and percentage (%) of patients with each feature divided by whether they developed post-ERCP pancreatitis. The model column depicts in which model(s) the variable was used as a predictor (1, Model with clinically relevant variables; 2, Model with 20 variables and backwards selection; 1+2, both models; excluded, Variables included in the model with 20 variables which were then removed during backwards selection). Age was an additional predictor in both models.
 
-```{r discrimination model_rms, include=TRUE}
-# to obtain c statistic
-round(0.5 * (val[1 , ] + 1),2)
+```{r, results = "asis", echo=FALSE, include=FALSE}
+star = stargazer(model_rms, model_rms_bw, type = "latex", title = "Table 2. Model predictors", dep.var.labels = "Post ERCP Pancreatitis", single.row = TRUE, header = FALSE)
+star = sub('^.+\\caption.+$','', star)
+
+#https://stackoverflow.com/questions/55521433/getting-rid-of-table-1-from-the-top-of-stargazer
+
 ```
 
-```{r ROC model_rms, echo=FALSE, message=TRUE}
-# to obtain an ROC curve
-df_pred <- df_clean %>% 
-  mutate(pred_pancreatitis = predict(model_rms, type = "fitted"))
+\pagebreak
 
-plot.roc(df_pred$outcome, df_pred$pred_pancreatitis, asp = NA)
+## Table 2. Model predictors
+```{r, table 2, results='asis', echo=FALSE}
+cat(star, sep='\n')
 ```
 
-```{r calibration model_rms, echo=FALSE, results='hide'}
+
+This table depicts the coefficients (standard errors) and p values (according to asterisks) for the first model (clinically relevant variables) and second model (backwards selection variables) respectively. 
+
+sod, Sphincter Oddi dysfunction; pep, Previous post ERCP pancreatitis; psphinc, Pancreatic sphincterotomy performed; precut, Sphincter pre-cut; dican, Difficult cannulation; peudil, Pneumatic dilatation of papilla; amp, Ampullectomy performed; rx, Indometacin/Placebo group; train; Trainee performed ERCP; acinar, Acinarization of imaging. 
+
+\pagebreak
+
+## Figure 1. Calibration plot for model 1
+```{r, figure 1, echo=FALSE, results='hide'}
+
 calibrate(model_rms, B = 200) %>% 
+plot(.)
+
+```
+
+\pagebreak
+
+## Figure 2. Calibration plot for model 2
+```{r, figure 2, echo=FALSE, results='hide'}
+calibrate(model_rms_bw, B = 200) %>% 
 plot(.)
 ```
 
-```{r decision curve model_rms, echo=FALSE, message=FALSE}
-
-dca <- decision_curve(outcome~pred_pancreatitis, data=df_pred, fitted.risk = TRUE)
-plot_decision_curve(dca)
-
-
-```
-
-
-
-
-
-
-
-
-
-
-
-## Here is the data for model 2 containing 8 vars after backwardregression
-
-
-
-
-```{r internal validation model_rms_bw, include=TRUE}
-
-# bootstrapping
-val <- validate(model_rms_bw, method="boot", B = 200)
-
-val
-```
-
-```{r discrimination model_rms_bw, include=TRUE}
-# to obtain c statistic
-0.5 * (val[1 , ] + 1)
-
-# to obtain an ROC curve
-df_pred <- df_clean %>% 
-  mutate(pred_pancreatitis = predict(model_rms_bw, type = "fitted"))
-
-plot.roc(df_pred$outcome, df_pred$pred_pancreatitis, asp = NA)
-```
-
-```{r calibration model_rms_bw, include=TRUE}
-calibrate(model_rms, B = 200) %>% 
-plot(.)
-```
-
-```{r decision curve model_rms_bw, include=TRUE}
-
-dca <- decision_curve(outcome~pred_pancreatitis, data=df_pred, fitted.risk = TRUE)
-plot_decision_curve(dca)
-
-
-```
+\pagebreak
 
 ## References
